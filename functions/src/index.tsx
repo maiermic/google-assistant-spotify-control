@@ -1,5 +1,5 @@
 import * as functions from 'firebase-functions';
-import * as escapeHtml from 'escape-html';
+import escapeHtml from 'escape-html';
 import {
   Contexts,
   dialogflow, DialogflowConversation,
