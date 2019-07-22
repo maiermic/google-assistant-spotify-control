@@ -5,8 +5,8 @@ import {
   dialogflow, DialogflowConversation,
   Suggestions,
 } from 'actions-on-google';
-import {ssml} from 'actions-on-google/util/ssml'
 import {ContextValues} from "actions-on-google/dist/service/dialogflow";
+import {ssml} from './ssml'
 
 interface ConversationData {
   list: { offset: number; limit: number; };
