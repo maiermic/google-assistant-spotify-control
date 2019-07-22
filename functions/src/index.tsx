@@ -1,3 +1,4 @@
+import SpotifyWebApi from 'spotify-web-api-node';
 import * as functions from 'firebase-functions';
 import escapeHtml from 'escape-html';
 import {
@@ -15,10 +16,23 @@ interface ConversationData {
 
 type UserStorage = {}
 
-type Conversation = DialogflowConversation<ConversationData, UserStorage>;
+interface Conversation extends DialogflowConversation<ConversationData, UserStorage, Contexts> {
+  spotify: SpotifyWebApi
+}
 
 
-const app = dialogflow<ConversationData, UserStorage>({debug: true});
+const app = dialogflow<Conversation>({debug: true});
+
+// @ts-ignore https://github.com/actions-on-google/actions-on-google-nodejs/issues/260
+app.middleware((conv: Conversation) => {
+  const config = functions.config();
+  conv.spotify = new SpotifyWebApi({
+    clientId: config.spotify.client.id,
+    clientSecret: config.spotify.client.secret,
+    redirectUri: config.spotify.redirect_uri,
+  });
+  conv.spotify.setAccessToken(conv.user.access.token as string);
+});
 
 app.intent('Default Welcome Intent', conv => {
   conv.ask('Hi, do you want to play a song, artist or playlist?');
@@ -26,13 +40,9 @@ app.intent('Default Welcome Intent', conv => {
 });
 
 function createArtistListSsml(artistNames: string[]) {
-  const firstLetter = 'A';
   return <speak>
     <p>
-      <s>
-        Here are the artists starting with the letter
-        <say-as interpret-as="characters">{firstLetter}</say-as>:
-      </s>
+      <s>Here are your followed artists:</s>
       {
         artistNames
           .map((artist, i) => <s>{i + 1}. {escapeHtml(artist)}</s>)
@@ -58,19 +68,13 @@ function getArtistNames({artists, list: {offset, limit}}: ConversationData) {
   return artists.slice(offset, offset + limit);
 }
 
-app.intent<{ letter: string }>('Artist', conv => {
-  conv.data.artists = [
-    'Alan Walker',
-    'Alessia Cara',
-    'Alesso',
-    'Alestorm',
-    'Alex Skrindo',
-    'Alexa Lusader',
-  ];
+app.intent<{ letter: string }>('Artist', async conv => {
   conv.data.list = {
     offset: 0,
     limit: 3,
   };
+  const {body: {artists}} = await conv.spotify.getFollowedArtists({limit: conv.data.list.limit});
+  conv.data.artists = artists.items.map(a => a.name);
   conv.ask(createArtistListSsml(getArtistNames(conv.data)));
 });
 
