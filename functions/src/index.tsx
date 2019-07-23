@@ -9,9 +9,20 @@ import {
 import {ContextValues} from "actions-on-google/dist/service/dialogflow";
 import {ssml} from './ssml'
 
+interface AfterOptions {
+  after?: string
+  limit?: number
+}
+
+
+interface Artist {
+  name: string
+  uri: string
+}
+
 interface ConversationData {
   list: { offset: number; limit: number; };
-  artists: string[];
+  artists: Artist[];
 }
 
 type UserStorage = {}
@@ -65,16 +76,41 @@ function listSsml(items: string[]) {
 }
 
 function getArtistNames({artists, list: {offset, limit}}: ConversationData) {
-  return artists.slice(offset, offset + limit);
+  return artists.slice(offset, offset + limit).map(a => a.name);
 }
+
+async function getFollowedArtists(spotify: SpotifyWebApi): Promise<Artist[]> {
+  const result: Artist[] = [];
+  const options: AfterOptions = {limit: 50};
+  while (true) {
+    const {
+      body: {
+        artists: {cursors, items, next}
+      }
+    } = await spotify.getFollowedArtists(options);
+    options.after = cursors.after;
+    for (const {name, uri} of items) {
+      result.push({name, uri});
+    }
+    if (!next) {
+      break;
+    }
+  }
+  return result;
+}
+
+function compareName(l: { name: string }, r: { name: string }) {
+  return l.name.localeCompare(r.name);
+}
+
 
 app.intent<{ letter: string }>('Artist', async conv => {
   conv.data.list = {
     offset: 0,
     limit: 3,
   };
-  const {body: {artists}} = await conv.spotify.getFollowedArtists({limit: conv.data.list.limit});
-  conv.data.artists = artists.items.map(a => a.name);
+  conv.data.artists = await getFollowedArtists(conv.spotify);
+  conv.data.artists.sort(compareName);
   conv.ask(createArtistListSsml(getArtistNames(conv.data)));
 });
 
@@ -94,10 +130,13 @@ function extendArtistFollowupContextLifespan<TContexts extends Contexts>(
   extendContextLifespan(contexts, 'artist-followup');
 }
 
-app.intent('Artist - select.number', (conv, params: { number: string }) => {
+app.intent('Artist - select.number', async (conv, params: { number: string }) => {
+  // TODO validate
   const artistNr = parseInt(params.number);
-  const selectedArtist = conv.data.artists[artistNr - 1];
-  conv.close(`You have selected artist ${artistNr}: ${escapeHtml(selectedArtist)}`);
+  const selectedArtist = conv.data.artists[conv.data.list.offset + artistNr - 1];
+  // TODO handle error
+  await conv.spotify.play({context_uri: selectedArtist.uri});
+  conv.close(`You have selected artist ${artistNr}: ${selectedArtist.name}`);
 });
 
 function listNextArtists(conv: Conversation) {
