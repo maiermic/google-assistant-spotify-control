@@ -104,13 +104,23 @@ function compareName(l: { name: string }, r: { name: string }) {
 }
 
 
-app.intent<{ letter: string }>('Artist', async conv => {
+app.intent<{ firstLetter: string }>('Artist', async (conv, {firstLetter}) => {
+  const artists = await getFollowedArtists(conv.spotify);
+  artists.sort(compareName);
+  conv.data.artists = artists;
   conv.data.list = {
     offset: 0,
     limit: 3,
   };
-  conv.data.artists = await getFollowedArtists(conv.spotify);
-  conv.data.artists.sort(compareName);
+  if (firstLetter) {
+    const i = artists.findIndex(a => a.name.charAt(0) === firstLetter);
+    if (i < 0) {
+      // TODO invalid format (SSML is appended to this text afterwards)
+      conv.ask(`You do not follow any artist whose name begins with ${firstLetter}. `);
+    } else {
+      conv.data.list.offset = i;
+    }
+  }
   conv.ask(createArtistListSsml(getArtistNames(conv.data)));
 });
 
