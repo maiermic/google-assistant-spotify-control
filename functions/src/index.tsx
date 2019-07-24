@@ -26,10 +26,14 @@ interface ConversationData {
   artists: Artist[];
 }
 
-type UserStorage = {}
+interface UserStorage {
+  responseDelay: string
+}
 
 interface Conversation extends DialogflowConversation<ConversationData, UserStorage, Contexts> {
   spotify: SpotifyWebApi
+  askSsml: (sentencesOrSsml: SsmlBuilder | string | string[]) => this
+  listArtistNames(): void
 }
 
 
@@ -46,34 +50,63 @@ app.middleware((conv: Conversation) => {
   conv.spotify.setAccessToken(conv.user.access.token as string);
 });
 
+// @ts-ignore https://github.com/actions-on-google/actions-on-google-nodejs/issues/260
+app.middleware((conv: Conversation) => {
+  // ensure configuration is set
+  conv.user.storage.responseDelay = conv.user.storage.responseDelay || '0 s';
+});
+
+// @ts-ignore https://github.com/actions-on-google/actions-on-google-nodejs/issues/260
+app.middleware((conv: Conversation) => {
+  conv.askSsml = (sentencesOrSsml: SsmlBuilder | string | string[]) => {
+    const ssmlBuilder =
+      sentencesOrSsml instanceof SsmlBuilder
+        ? sentencesOrSsml
+        : new SsmlBuilder(typeof sentencesOrSsml === 'string' ? [sentencesOrSsml] : sentencesOrSsml);
+    return conv.ask(ssmlBuilder.build(conv.user.storage.responseDelay));
+  };
+  conv.listArtistNames = () => {
+    const ssmlBuilder = new SsmlBuilder();
+    ssmlBuilder.addList(getArtistNames(conv.data));
+    conv.askSsml(ssmlBuilder);
+  }
+});
+
 app.intent('Default Welcome Intent', conv => {
-  conv.ask('Hi, do you want to play a song, artist or playlist?');
+  conv.askSsml('Hi, do you want to play a song, artist or playlist?');
+  // conv.ask('Hi, do you want to play a song, artist or playlist?');
   conv.ask(new Suggestions(['song', 'artist', 'playlist']));
 });
 
-function createArtistListSsml(artistNames: string[]) {
-  return <speak>
-    <p>
-      <s>Here are your followed artists:</s>
-      {
-        artistNames
-          .map((artist, i) => <s>{i + 1}. {escapeHtml(artist)}</s>)
-          .join('\n')
-      }
-    </p>
-  </speak>
-}
+class SsmlBuilder {
+  constructor(private sentences: string[] = []) {
+  }
 
-function listSsml(items: string[]) {
-  return <speak>
-    <p>
-      {
-        items
-          .map((item, index) => <s>{index + 1}. {escapeHtml(item)}</s>)
-          .join('\n')
-      }
-    </p>
-  </speak>
+  build(delay: string) {
+    return <speak>
+      <break time={delay}/>
+      <prosody volume="x-loud">
+        <p>{
+          this.sentences
+            .map(s => s.startsWith('<s>') ? s : <s>{s}</s>)
+            .join('\n')
+        }</p>
+      </prosody>
+    </speak>
+  }
+
+  add(sentence: string) {
+    this.sentences.push(sentence);
+  }
+
+  addList(items: string[]) {
+    const indexedItems =
+      items.map((item, index) =>
+        `${index + 1}. ${escapeHtml(item)}`);
+    for (const i of indexedItems) {
+      this.sentences.push(i);
+    }
+  }
 }
 
 function getArtistNames({artists, list: {offset, limit}}: ConversationData) {
@@ -109,6 +142,22 @@ interface ArtistIntentParameters extends Parameters {
   spelledWord: string[]
 }
 
+interface DurationEntity {
+  amount: number
+  unit: string
+}
+
+interface ConfigureResponseDelayIntentParameters extends Parameters {
+  delay: DurationEntity
+}
+
+app.intent<ConfigureResponseDelayIntentParameters>(
+  'ConfigureResponseDelay',
+  (conv, {delay}) => {
+    conv.user.storage.responseDelay = `${delay.amount} ${delay.unit}`;
+    conv.askSsml(`Response delay has been set to ${conv.user.storage.responseDelay}`);
+  });
+
 app.intent<ArtistIntentParameters>(
   'Artist',
   async (conv, {firstLetter, spelledWord}: ArtistIntentParameters) => {
@@ -119,20 +168,28 @@ app.intent<ArtistIntentParameters>(
       offset: 0,
       limit: 3,
     };
+    const ssmlBuilder = new SsmlBuilder();
     if (spelledWord.length) {
       const word = spelledWord.join('').toLowerCase();
-      conv.data.artists = artists.filter(a => a.name.toLowerCase().includes(word))
+      conv.data.artists = artists.filter(a => a.name.toLowerCase().includes(word));
+      ssmlBuilder.add(
+        <s>
+          Here are your followed artists containing the word {word} spelled
+          <say-as interpret-as="characters">{word}</say-as>:
+        </s>);
     }
     if (firstLetter) {
       const i = artists.findIndex(a => a.name.charAt(0) === firstLetter);
       if (i < 0) {
-        // TODO invalid format (SSML is appended to this text afterwards)
-        conv.ask(`You do not follow any artist whose name begins with ${firstLetter}. `);
+        ssmlBuilder.add(`You do not follow any artist whose name begins with ${firstLetter}.`);
+        ssmlBuilder.add(`Here are your followed artists:`);
       } else {
         conv.data.list.offset = i;
+        ssmlBuilder.add(`Here are your followed artists starting with ${firstLetter}:`);
       }
     }
-    conv.ask(createArtistListSsml(getArtistNames(conv.data)));
+    ssmlBuilder.addList(getArtistNames(conv.data));
+    conv.askSsml(ssmlBuilder);
   });
 
 function extendContextLifespan<TContexts extends Contexts>(
@@ -163,7 +220,7 @@ app.intent('Artist - select.number', async (conv, params: { number: string }) =>
 function listNextArtists(conv: Conversation) {
   extendArtistFollowupContextLifespan(conv.contexts);
   conv.data.list.offset += conv.data.list.limit;
-  conv.ask(listSsml(getArtistNames(conv.data)));
+  conv.listArtistNames();
 }
 
 app.intent('Artist - more', listNextArtists);
@@ -173,12 +230,12 @@ app.intent('Artist - previous', function listPreviousArtists(conv: Conversation)
   extendArtistFollowupContextLifespan(conv.contexts);
   const {limit, offset} = conv.data.list;
   conv.data.list.offset = Math.max(0, offset - limit);
-  conv.ask(listSsml(getArtistNames(conv.data)));
+  conv.listArtistNames();
 });
 
 app.intent('Artist - repeat', function listPreviousArtists(conv: Conversation) {
   extendArtistFollowupContextLifespan(conv.contexts);
-  conv.ask(listSsml(getArtistNames(conv.data)));
+  conv.listArtistNames();
 });
 
 app.intent('Goodbye', conv => {
