@@ -5,6 +5,7 @@ import {
   Contexts,
   dialogflow, DialogflowConversation,
   Suggestions,
+  Parameters,
 } from 'actions-on-google';
 import {ContextValues} from "actions-on-google/dist/service/dialogflow";
 import {ssml} from './ssml'
@@ -103,26 +104,36 @@ function compareName(l: { name: string }, r: { name: string }) {
   return l.name.localeCompare(r.name);
 }
 
+interface ArtistIntentParameters extends Parameters {
+  firstLetter: string
+  spelledWord: string[]
+}
 
-app.intent<{ firstLetter: string }>('Artist', async (conv, {firstLetter}) => {
-  const artists = await getFollowedArtists(conv.spotify);
-  artists.sort(compareName);
-  conv.data.artists = artists;
-  conv.data.list = {
-    offset: 0,
-    limit: 3,
-  };
-  if (firstLetter) {
-    const i = artists.findIndex(a => a.name.charAt(0) === firstLetter);
-    if (i < 0) {
-      // TODO invalid format (SSML is appended to this text afterwards)
-      conv.ask(`You do not follow any artist whose name begins with ${firstLetter}. `);
-    } else {
-      conv.data.list.offset = i;
+app.intent<ArtistIntentParameters>(
+  'Artist',
+  async (conv, {firstLetter, spelledWord}: ArtistIntentParameters) => {
+    const artists = await getFollowedArtists(conv.spotify);
+    artists.sort(compareName);
+    conv.data.artists = artists;
+    conv.data.list = {
+      offset: 0,
+      limit: 3,
+    };
+    if (spelledWord.length) {
+      const word = spelledWord.join('').toLowerCase();
+      conv.data.artists = artists.filter(a => a.name.toLowerCase().includes(word))
     }
-  }
-  conv.ask(createArtistListSsml(getArtistNames(conv.data)));
-});
+    if (firstLetter) {
+      const i = artists.findIndex(a => a.name.charAt(0) === firstLetter);
+      if (i < 0) {
+        // TODO invalid format (SSML is appended to this text afterwards)
+        conv.ask(`You do not follow any artist whose name begins with ${firstLetter}. `);
+      } else {
+        conv.data.list.offset = i;
+      }
+    }
+    conv.ask(createArtistListSsml(getArtistNames(conv.data)));
+  });
 
 function extendContextLifespan<TContexts extends Contexts>(
   contexts: ContextValues<TContexts>, contextName: string) {
