@@ -36,7 +36,7 @@ interface Conversation extends DialogflowConversation<ConversationData, UserStor
   listArtistNames(): void
 }
 
-
+const defaultResponseDelay = '0 s';
 const app = dialogflow<Conversation>({debug: true});
 
 // @ts-ignore https://github.com/actions-on-google/actions-on-google-nodejs/issues/260
@@ -53,7 +53,7 @@ app.middleware((conv: Conversation) => {
 // @ts-ignore https://github.com/actions-on-google/actions-on-google-nodejs/issues/260
 app.middleware((conv: Conversation) => {
   // ensure configuration is set
-  conv.user.storage.responseDelay = conv.user.storage.responseDelay || '0 s';
+  conv.user.storage.responseDelay = conv.user.storage.responseDelay || defaultResponseDelay;
 });
 
 // @ts-ignore https://github.com/actions-on-google/actions-on-google-nodejs/issues/260
@@ -156,6 +156,23 @@ app.intent<ConfigureResponseDelayIntentParameters>(
   (conv, {delay}) => {
     conv.user.storage.responseDelay = `${delay.amount} ${delay.unit}`;
     conv.askSsml(`Response delay has been set to ${conv.user.storage.responseDelay}`);
+  });
+
+app.intent(
+  'reset response delay',
+  conv => {
+    conv.user.storage.responseDelay = defaultResponseDelay;
+    conv.askSsml(`Response delay has been set to ${conv.user.storage.responseDelay}`);
+  });
+
+app.intent<{count: number}>(
+  'count seconds',
+  (conv, {count}) => {
+    const ssmlBuilder = new SsmlBuilder();
+    for (let i = 0; i < count; i++) {
+      ssmlBuilder.add(<s>{i}<break time="1 s"/></s>)
+    }
+    conv.askSsml(ssmlBuilder);
   });
 
 app.intent<ArtistIntentParameters>(
