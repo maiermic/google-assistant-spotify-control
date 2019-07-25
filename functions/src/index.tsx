@@ -34,6 +34,7 @@ interface Conversation extends DialogflowConversation<ConversationData, UserStor
   spotify: SpotifyWebApi
   askSsml: (sentencesOrSsml: SsmlBuilder | string | string[]) => this
   listItemNames(): void
+  addListSuggestions(): void
 }
 
 const defaultResponseDelay = '0 s';
@@ -69,7 +70,24 @@ app.middleware((conv: Conversation) => {
     const ssmlBuilder = new SsmlBuilder();
     ssmlBuilder.addList(getListItemNames(conv.data));
     conv.askSsml(ssmlBuilder);
-  }
+  };
+  conv.addListSuggestions = () => {
+    const {offset, limit} = conv.data.list;
+    const total = conv.data.items.length;
+    const count = Math.min(limit, total - offset);
+    const suggestions: string[] = new Array(count + 2);
+    for (let i = 0; i < count; i++) {
+      suggestions[i] = `${i + 1}`;
+    }
+    if (offset > 0) {
+      suggestions.push('previous');
+    }
+    if (total > offset + limit) {
+      suggestions.push('next');
+    }
+    suggestions.push('repeat');
+    conv.ask(new Suggestions(suggestions));
+  };
 });
 
 app.intent('Default Welcome Intent', conv => {
@@ -211,6 +229,7 @@ app.intent<ListIntentParameters>(
     }
     ssmlBuilder.addList(getListItemNames(conv.data));
     conv.askSsml(ssmlBuilder);
+    conv.addListSuggestions();
   });
 
 function extendContextLifespan<TContexts extends Contexts>(
@@ -242,6 +261,7 @@ function listNextItems(conv: Conversation) {
   extendListFollowupContextLifespan(conv.contexts);
   conv.data.list.offset += conv.data.list.limit;
   conv.listItemNames();
+  conv.addListSuggestions();
 }
 
 app.intent('list - more', listNextItems);
@@ -252,11 +272,13 @@ app.intent('list - previous', function listPreviousItems(conv: Conversation) {
   const {limit, offset} = conv.data.list;
   conv.data.list.offset = Math.max(0, offset - limit);
   conv.listItemNames();
+  conv.addListSuggestions();
 });
 
 app.intent('list - repeat', function listCurrentItems(conv: Conversation) {
   extendListFollowupContextLifespan(conv.contexts);
   conv.listItemNames();
+  conv.addListSuggestions();
 });
 
 async function getPlaylists(spotify: SpotifyWebApi): Promise<ListItem[]> {
