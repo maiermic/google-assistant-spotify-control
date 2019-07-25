@@ -21,6 +21,11 @@ interface Artist {
   uri: string
 }
 
+interface Playlist {
+  name: string
+  uri: string
+}
+
 interface ConversationData {
   list: { offset: number; limit: number; };
   artists: Artist[];
@@ -254,6 +259,40 @@ app.intent('Artist - repeat', function listPreviousArtists(conv: Conversation) {
   extendArtistFollowupContextLifespan(conv.contexts);
   conv.listArtistNames();
 });
+
+async function getPlaylists(spotify: SpotifyWebApi): Promise<Playlist[]> {
+  const result: Artist[] = [];
+  const options = {limit: 50, offset: 0};
+  while (true) {
+    const {
+      body: {items, next}
+    } = await spotify.getUserPlaylists(options);
+    options.offset += options.limit;
+    for (const {name, uri} of items) {
+      result.push({name: name.trim(), uri});
+    }
+    if (!next) {
+      break;
+    }
+  }
+  return result;
+}
+
+
+app.intent(
+  'playlist',
+  async (conv) => {
+    const playlists = await getPlaylists(conv.spotify);
+    playlists.sort(compareName);
+    conv.data.artists = playlists;
+    conv.data.list = {
+      offset: 0,
+      limit: 3,
+    };
+    const ssmlBuilder = new SsmlBuilder();
+    ssmlBuilder.addList(getArtistNames(conv.data));
+    conv.askSsml(ssmlBuilder);
+  });
 
 app.intent('Goodbye', conv => {
   conv.close('See you later!')
