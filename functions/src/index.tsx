@@ -252,9 +252,16 @@ app.intent('list - select.number', async (conv, params: { number: string }) => {
   // TODO validate
   const itemNumber = parseInt(params.number);
   const selectedItem = conv.data.items[conv.data.list.offset + itemNumber - 1];
-  // TODO handle error
-  await conv.spotify.play({context_uri: selectedItem.uri});
-  conv.close(`You have selected ${itemNumber}: ${selectedItem.name}`);
+  const ssmlBuilder = new SsmlBuilder([
+    `You have selected ${itemNumber}: ${selectedItem.name}.`
+  ]);
+  try {
+    await conv.spotify.play({context_uri: selectedItem.uri});
+  } catch (e) {
+    ssmlBuilder.add('But Spotify is not active. Activate it and try again.')
+  }
+  conv.askSsml(ssmlBuilder);
+  conv.close();
 });
 
 function listNextItems(conv: Conversation) {
