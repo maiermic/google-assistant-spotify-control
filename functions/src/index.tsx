@@ -16,19 +16,14 @@ interface AfterOptions {
 }
 
 
-interface Artist {
-  name: string
-  uri: string
-}
-
-interface Playlist {
+interface ListItem {
   name: string
   uri: string
 }
 
 interface ConversationData {
   list: { offset: number; limit: number; };
-  artists: Artist[];
+  items: ListItem[];
 }
 
 interface UserStorage {
@@ -38,7 +33,7 @@ interface UserStorage {
 interface Conversation extends DialogflowConversation<ConversationData, UserStorage, Contexts> {
   spotify: SpotifyWebApi
   askSsml: (sentencesOrSsml: SsmlBuilder | string | string[]) => this
-  listArtistNames(): void
+  listItemNames(): void
 }
 
 const defaultResponseDelay = '0 s';
@@ -70,16 +65,15 @@ app.middleware((conv: Conversation) => {
         : new SsmlBuilder(typeof sentencesOrSsml === 'string' ? [sentencesOrSsml] : sentencesOrSsml);
     return conv.ask(ssmlBuilder.build(conv.user.storage.responseDelay));
   };
-  conv.listArtistNames = () => {
+  conv.listItemNames = () => {
     const ssmlBuilder = new SsmlBuilder();
-    ssmlBuilder.addList(getArtistNames(conv.data));
+    ssmlBuilder.addList(getListItemNames(conv.data));
     conv.askSsml(ssmlBuilder);
   }
 });
 
 app.intent('Default Welcome Intent', conv => {
   conv.askSsml('Hi, do you want to play a song, artist or playlist?');
-  // conv.ask('Hi, do you want to play a song, artist or playlist?');
   conv.ask(new Suggestions(['song', 'artist', 'playlist']));
 });
 
@@ -114,12 +108,12 @@ class SsmlBuilder {
   }
 }
 
-function getArtistNames({artists, list: {offset, limit}}: ConversationData) {
-  return artists.slice(offset, offset + limit).map(a => a.name);
+function getListItemNames({items, list: {offset, limit}}: ConversationData) {
+  return items.slice(offset, offset + limit).map(a => a.name);
 }
 
-async function getFollowedArtists(spotify: SpotifyWebApi): Promise<Artist[]> {
-  const result: Artist[] = [];
+async function getFollowedArtists(spotify: SpotifyWebApi): Promise<ListItem[]> {
+  const result: ListItem[] = [];
   const options: AfterOptions = {limit: 50};
   while (true) {
     const {
@@ -142,7 +136,8 @@ function compareName(l: { name: string }, r: { name: string }) {
   return l.name.localeCompare(r.name);
 }
 
-interface ArtistIntentParameters extends Parameters {
+interface ListIntentParameters extends Parameters {
+  listItemType: 'artist' | 'playlist'
   firstLetter: string
   spelledWord: string[]
 }
@@ -180,12 +175,16 @@ app.intent<{count: number}>(
     conv.askSsml(ssmlBuilder);
   });
 
-app.intent<ArtistIntentParameters>(
-  'Artist',
-  async (conv, {firstLetter, spelledWord}: ArtistIntentParameters) => {
-    const artists = await getFollowedArtists(conv.spotify);
-    artists.sort(compareName);
-    conv.data.artists = artists;
+app.intent<ListIntentParameters>(
+  'list',
+  async (conv, {firstLetter, spelledWord, listItemType}) => {
+    const getItems: (spotify: SpotifyWebApi) => Promise<ListItem[]> = {
+      artist: getFollowedArtists,
+      playlist: getPlaylists,
+    }[listItemType];
+    const items = await getItems(conv.spotify);
+    items.sort(compareName);
+    conv.data.items = items;
     conv.data.list = {
       offset: 0,
       limit: 3,
@@ -193,24 +192,24 @@ app.intent<ArtistIntentParameters>(
     const ssmlBuilder = new SsmlBuilder();
     if (spelledWord.length) {
       const word = spelledWord.join('').toLowerCase();
-      conv.data.artists = artists.filter(a => a.name.toLowerCase().includes(word));
+      conv.data.items = items.filter(a => a.name.toLowerCase().includes(word));
       ssmlBuilder.add(
         <s>
-          Here are your followed artists containing the word {word} spelled
+          Here are your {listItemType}s containing the word {word} spelled
           <say-as interpret-as="characters">{word}</say-as>:
         </s>);
     }
     if (firstLetter) {
-      const i = artists.findIndex(a => a.name.charAt(0) === firstLetter);
+      const i = items.findIndex(a => a.name.charAt(0) === firstLetter);
       if (i < 0) {
-        ssmlBuilder.add(`You do not follow any artist whose name begins with ${firstLetter}.`);
-        ssmlBuilder.add(`Here are your followed artists:`);
+        ssmlBuilder.add(`None of your ${listItemType}s begins with ${firstLetter}.`);
+        ssmlBuilder.add(`Here are your ${listItemType}s:`);
       } else {
         conv.data.list.offset = i;
-        ssmlBuilder.add(`Here are your followed artists starting with ${firstLetter}:`);
+        ssmlBuilder.add(`Here are your ${listItemType}s starting with ${firstLetter}:`);
       }
     }
-    ssmlBuilder.addList(getArtistNames(conv.data));
+    ssmlBuilder.addList(getListItemNames(conv.data));
     conv.askSsml(ssmlBuilder);
   });
 
@@ -225,43 +224,43 @@ function extendContextLifespan<TContexts extends Contexts>(
   }
 }
 
-function extendArtistFollowupContextLifespan<TContexts extends Contexts>(
+function extendListFollowupContextLifespan<TContexts extends Contexts>(
   contexts: ContextValues<TContexts>) {
-  extendContextLifespan(contexts, 'artist-followup');
+  extendContextLifespan(contexts, 'list-followup');
 }
 
-app.intent('Artist - select.number', async (conv, params: { number: string }) => {
+app.intent('list - select.number', async (conv, params: { number: string }) => {
   // TODO validate
-  const artistNr = parseInt(params.number);
-  const selectedArtist = conv.data.artists[conv.data.list.offset + artistNr - 1];
+  const itemNumber = parseInt(params.number);
+  const selectedItem = conv.data.items[conv.data.list.offset + itemNumber - 1];
   // TODO handle error
-  await conv.spotify.play({context_uri: selectedArtist.uri});
-  conv.close(`You have selected artist ${artistNr}: ${selectedArtist.name}`);
+  await conv.spotify.play({context_uri: selectedItem.uri});
+  conv.close(`You have selected ${itemNumber}: ${selectedItem.name}`);
 });
 
-function listNextArtists(conv: Conversation) {
-  extendArtistFollowupContextLifespan(conv.contexts);
+function listNextItems(conv: Conversation) {
+  extendListFollowupContextLifespan(conv.contexts);
   conv.data.list.offset += conv.data.list.limit;
-  conv.listArtistNames();
+  conv.listItemNames();
 }
 
-app.intent('Artist - more', listNextArtists);
-app.intent('Artist - next', listNextArtists);
+app.intent('list - more', listNextItems);
+app.intent('list - next', listNextItems);
 
-app.intent('Artist - previous', function listPreviousArtists(conv: Conversation) {
-  extendArtistFollowupContextLifespan(conv.contexts);
+app.intent('list - previous', function listPreviousItems(conv: Conversation) {
+  extendListFollowupContextLifespan(conv.contexts);
   const {limit, offset} = conv.data.list;
   conv.data.list.offset = Math.max(0, offset - limit);
-  conv.listArtistNames();
+  conv.listItemNames();
 });
 
-app.intent('Artist - repeat', function listPreviousArtists(conv: Conversation) {
-  extendArtistFollowupContextLifespan(conv.contexts);
-  conv.listArtistNames();
+app.intent('list - repeat', function listCurrentItems(conv: Conversation) {
+  extendListFollowupContextLifespan(conv.contexts);
+  conv.listItemNames();
 });
 
-async function getPlaylists(spotify: SpotifyWebApi): Promise<Playlist[]> {
-  const result: Artist[] = [];
+async function getPlaylists(spotify: SpotifyWebApi): Promise<ListItem[]> {
+  const result: ListItem[] = [];
   const options = {limit: 50, offset: 0};
   while (true) {
     const {
@@ -277,22 +276,6 @@ async function getPlaylists(spotify: SpotifyWebApi): Promise<Playlist[]> {
   }
   return result;
 }
-
-
-app.intent(
-  'playlist',
-  async (conv) => {
-    const playlists = await getPlaylists(conv.spotify);
-    playlists.sort(compareName);
-    conv.data.artists = playlists;
-    conv.data.list = {
-      offset: 0,
-      limit: 3,
-    };
-    const ssmlBuilder = new SsmlBuilder();
-    ssmlBuilder.addList(getArtistNames(conv.data));
-    conv.askSsml(ssmlBuilder);
-  });
 
 app.intent('Goodbye', conv => {
   conv.close('See you later!')
