@@ -90,10 +90,12 @@ app.middleware((conv: Conversation) => {
   };
 });
 
-app.intent('Default Welcome Intent', conv => {
+app.intent('Default Welcome Intent', welcome);
+
+function welcome(conv: Conversation) {
   conv.askSsml('Hi, do you want to play a song, artist or playlist?');
   conv.ask(new Suggestions(['song', 'artist', 'playlist']));
-});
+}
 
 class SsmlBuilder {
   constructor(private sentences: string[] = []) {
@@ -288,10 +290,22 @@ app.intent('list - previous', function listPreviousItems(conv: Conversation) {
   conv.addListSuggestions();
 });
 
-app.intent('list - repeat', function listCurrentItems(conv: Conversation) {
+function listCurrentItems(conv: Conversation) {
   extendListFollowupContextLifespan(conv.contexts);
   conv.listItemNames();
   conv.addListSuggestions();
+}
+
+app.intent('list - repeat', listCurrentItems);
+
+app.intent('actions_intent_NO_INPUT', conv => {
+  if (conv.arguments.get('IS_FINAL_REPROMPT')) {
+    conv.close(`Okay let's try this again later.`);
+  } else if (conv.data.items) {
+    listCurrentItems(conv);
+  } else {
+    welcome(conv);
+  }
 });
 
 async function getPlaylists(spotify: SpotifyWebApi): Promise<ListItem[]> {
