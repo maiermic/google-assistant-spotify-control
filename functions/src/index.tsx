@@ -27,6 +27,7 @@ interface ConversationData {
 }
 
 interface UserStorage {
+  selectedListItem?: ListItem;
   responseDelay: string
 }
 
@@ -262,6 +263,7 @@ app.intent('list - select.number', async (conv, params: { number: string }) => {
     return;
   }
   const selectedItem = conv.data.items[offset + itemNumber - 1];
+  conv.user.storage.selectedListItem = selectedItem;
   ssmlBuilder.add(`You have selected ${itemNumber}: ${selectedItem.name}.`);
   try {
     await conv.spotify.play({context_uri: selectedItem.uri});
@@ -297,6 +299,23 @@ function listCurrentItems(conv: Conversation) {
 }
 
 app.intent('list - repeat', listCurrentItems);
+
+app.intent('retry', async conv => {
+  const ssmlBuilder = new SsmlBuilder();
+  const selectedListItem = conv.user.storage.selectedListItem;
+  if (!selectedListItem) {
+    ssmlBuilder.add(`Nothing has been selected yet.`);
+  } else {
+    try {
+      await conv.spotify.play({context_uri: selectedListItem.uri});
+      ssmlBuilder.add(`Playing ${escapeHtml(selectedListItem.name)}.`);
+    } catch (e) {
+      ssmlBuilder.add('Spotify is not active. Activate it and try again.')
+    }
+  }
+  conv.askSsml(ssmlBuilder);
+  conv.close();
+});
 
 app.intent('actions_intent_NO_INPUT', conv => {
   if (conv.arguments.get('IS_FINAL_REPROMPT')) {
