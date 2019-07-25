@@ -249,12 +249,18 @@ function extendListFollowupContextLifespan<TContexts extends Contexts>(
 }
 
 app.intent('list - select.number', async (conv, params: { number: string }) => {
-  // TODO validate
+  const {limit, offset} = conv.data.list;
   const itemNumber = parseInt(params.number);
-  const selectedItem = conv.data.items[conv.data.list.offset + itemNumber - 1];
-  const ssmlBuilder = new SsmlBuilder([
-    `You have selected ${itemNumber}: ${selectedItem.name}.`
-  ]);
+  const ssmlBuilder = new SsmlBuilder();
+  if (itemNumber < 0 || limit < itemNumber) {
+    ssmlBuilder.add(`${itemNumber} is not a valid list entry.`);
+    ssmlBuilder.addList(getListItemNames(conv.data));
+    conv.askSsml(ssmlBuilder);
+    conv.addListSuggestions();
+    return;
+  }
+  const selectedItem = conv.data.items[offset + itemNumber - 1];
+  ssmlBuilder.add(`You have selected ${itemNumber}: ${selectedItem.name}.`);
   try {
     await conv.spotify.play({context_uri: selectedItem.uri});
   } catch (e) {
