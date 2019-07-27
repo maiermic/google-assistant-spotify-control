@@ -76,7 +76,7 @@ app.middleware((conv: Conversation) => {
     const {offset, limit} = conv.data.list;
     const total = conv.data.items.length;
     const count = Math.min(limit, total - offset);
-    const suggestions: string[] = new Array(count + 2);
+    const suggestions: string[] = new Array(count);
     for (let i = 0; i < count; i++) {
       suggestions[i] = `${i + 1}`;
     }
