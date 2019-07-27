@@ -159,7 +159,7 @@ function compareName(l: { name: string }, r: { name: string }) {
 
 interface ListIntentParameters extends Parameters {
   listItemType: 'artist' | 'playlist'
-  firstLetter: string
+  firstLetters: string[]
   spelledWord: string[]
 }
 
@@ -198,7 +198,7 @@ app.intent<{count: number}>(
 
 app.intent<ListIntentParameters>(
   'list',
-  async (conv, {firstLetter, spelledWord, listItemType}) => {
+  async (conv, {firstLetters, spelledWord, listItemType}) => {
     const getItems: (spotify: SpotifyWebApi) => Promise<ListItem[]> = {
       artist: getFollowedArtists,
       playlist: getPlaylists,
@@ -220,14 +220,23 @@ app.intent<ListIntentParameters>(
           <say-as interpret-as="characters">{word}</say-as>:
         </s>);
     }
-    if (firstLetter) {
-      const i = items.findIndex(a => a.name.charAt(0) === firstLetter);
+    if (firstLetters) {
+      const firstWord = firstLetters.join('').toLowerCase();
+      const i = items.findIndex(a => a.name.toLowerCase().startsWith(firstWord));
       if (i < 0) {
-        ssmlBuilder.add(`None of your ${listItemType}s begins with ${firstLetter}.`);
+        ssmlBuilder.add(
+          <s>
+            None of your {listItemType}s begins with
+            <say-as interpret-as="characters">{firstWord}</say-as>.
+          </s>);
         ssmlBuilder.add(`Here are your ${listItemType}s:`);
       } else {
         conv.data.list.offset = i;
-        ssmlBuilder.add(`Here are your ${listItemType}s starting with ${firstLetter}:`);
+        ssmlBuilder.add(
+          <s>
+            Here are your {listItemType}s starting with
+            <say-as interpret-as="characters">{firstWord}</say-as>:
+          </s>);
       }
     }
     ssmlBuilder.addList(getListItemNames(conv.data));
